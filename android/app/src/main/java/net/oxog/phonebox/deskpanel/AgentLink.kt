@@ -16,6 +16,8 @@ import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
@@ -51,6 +53,32 @@ class AgentLink(context: Context) {
                 j.getJSONArray("hosts").let { a -> (0 until a.length()).map { a.getString(it) } }, j.getInt("port"), j.getString("token"))
         }
     }
+
+    /** Key from security.json on the PC, handed over by adb when the agent opens the panel; signs every USB request. */
+    @Volatile private var usbKey: String? = prefs.getString(USB_KEY, null)
+
+    /** Saves a key the agent sent; anything that is not 64 hex digits is ignored. */
+    fun setUsbKey(key: String?) {
+        if (key == null || !USB_KEY_FORMAT.matches(key) || key == usbKey) return
+        usbKey = key
+        prefs.edit().putString(USB_KEY, key).apply()
+    }
+
+    /** HMAC-SHA256 of "METHOD
+path
+time" (see Security.cs on the agent): the key itself never leaves the phone. */
+    private fun signUsb(c: HttpURLConnection, method: String, pathAndQuery: String) {
+        val key = usbKey ?: return
+        val time = System.currentTimeMillis().toString()
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(hexToBytes(key), "HmacSHA256")) }
+        val signature = mac.doFinal("$method
+$pathAndQuery
+$time".toByteArray()).joinToString("") { "%02x".format(it) }
+        c.setRequestProperty("X-PhoneBox-Time", time)
+        c.setRequestProperty("X-PhoneBox-Signature", signature)
+    }
+
+    private fun hexToBytes(hex: String) = ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
     @Volatile private var pcs: List<Pc> = loadPcs()
     @Volatile private var activeId: String? = prefs.getString("active", null)
@@ -146,6 +174,7 @@ class AgentLink(context: Context) {
     private fun usb(method: String, pathAndQuery: String, readTimeout: Int = 4000): Reply? = try {
         val c = URL("$USB_BASE$pathAndQuery").openConnection() as HttpURLConnection
         c.connectTimeout = 400 // refused instantly when no adb reverse tunnel exists
+        signUsb(c, method, pathAndQuery)
         send(c, method, readTimeout)
     } catch (e: Exception) {
         null
@@ -215,6 +244,7 @@ class AgentLink(context: Context) {
                 val c = URL("$USB_BASE/api/pair").openConnection() as HttpURLConnection
                 c.connectTimeout = 800
                 c.readTimeout = 3000
+                signUsb(c, "GET", "/api/pair")
                 val j = JSONObject(c.inputStream.bufferedReader().readText())
                 val name = j.optString("pc")
                 if (j.optBoolean("enabled")) {
@@ -352,6 +382,9 @@ class AgentLink(context: Context) {
 
     companion object {
         private const val USB_BASE = "http://127.0.0.1:8765"
+        const val USB_KEY_EXTRA = "net.oxog.phonebox.usbKey"
+        private const val USB_KEY = "usbKey"
+        private val USB_KEY_FORMAT = Regex("^[0-9a-f]{64}$")
         /** The agent sends "state" every second, so a silent connection for this long is dead. */
         private const val STREAM_READ_TIMEOUT = 8000
     }

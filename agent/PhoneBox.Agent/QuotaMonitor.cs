@@ -30,7 +30,7 @@ public sealed record QuotaProvider(string Id, string Name, string Plan, IReadOnl
 ///  - Codex: the last "rate_limits" record in the newest rollout file under ~/.codex/sessions (fully local).
 ///  - Antigravity: a running local server, or the signed-in agy CLI's structured /usage command.
 /// </summary>
-public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonitor> log) : BackgroundService
+public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonitor> log, SecurityConfig? security = null) : BackgroundService
 {
     internal QuotaMonitor(ILogger<QuotaMonitor> log) : this(null!, log) { }
 
@@ -329,6 +329,7 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     /// <summary>One pass of the usage loop for Claude, at wall-clock time <paramref name="nowMs"/>.</summary>
     internal async Task ClaudeTickAsync(long nowMs, CancellationToken ct)
     {
+        if (security?.ClaudeAccess == false) return; // security.json: never read Claude Code's login token
         // The sign-in is read when a request is due, and once a minute while waiting for Claude Code to renew an
         // expired or refused token (on macOS each read starts the `security` tool).
         // The schedule is wall-clock time, shared with other agents through a file. A clock set back (an NTP correction,

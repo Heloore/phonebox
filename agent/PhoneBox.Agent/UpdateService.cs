@@ -18,7 +18,7 @@ public sealed record UpdateStatus(string AgentVersion, string? AppVersion, strin
 ///  - agent: files are swapped in place (running files are renamed to *.old, which Windows allows) and the agent
 ///    restarts itself. Only when running from the installed location, never from a build folder.
 /// </summary>
-public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicationLifetime life, ILogger<UpdateService> log) : BackgroundService
+public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicationLifetime life, ILogger<UpdateService> log, SecurityConfig? security = null) : BackgroundService
 {
     private static readonly string InstallDir = AppPaths.InstallDir;
     private static readonly string ExeName = OperatingSystem.IsWindows() ? "PhoneBoxAgent.exe" : "PhoneBoxAgent";
@@ -78,6 +78,7 @@ public sealed class UpdateService(ConfigStore cfg, AdbReverse adb, IHostApplicat
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         CleanupOldFiles();
         if (RunningInstalled) RemoveFrameworkDependentLeftovers(InstallDir, SingleFile);
+        if (security?.AutoUpdate == false) return; // security.json: no background checks or installs; Settings can still check by hand
         await Task.Delay(TimeSpan.FromSeconds(20), ct);
         var nextCheck = DateTime.MinValue;
         while (!ct.IsCancellationRequested)

@@ -30,6 +30,9 @@ AppPaths.RestrictConfig(configPath);
 var configStore = new ConfigStore(configPath);
 configStore.PersistGenerated(); // keep the Wi-Fi token stable across restarts
 var lanCfg = configStore.Get().Lan;
+var security = SecurityConfig.Load(SecurityConfig.PathNextTo(configPath));
+var usbPort = security.UsbTargetPort(Port);
+bool IsLocalPort(int port) => port == Port || port == usbPort;
 var lanCert = lanCfg.Enabled ? Lan.Certificate() : null;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -40,6 +43,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.WebHost.ConfigureKestrel(k =>
 {
     k.Listen(IPAddress.Loopback, Port);
+    // USB with a key: the phone's tunnel ends on its own port, where every request must be signed (see Security.cs)
+    if (usbPort != Port) k.Listen(IPAddress.Loopback, usbPort);
     // Wi-Fi / Tailscale: HTTPS with a pinned self-signed certificate, token required (see Lan.cs).
     if (lanCert is not null) k.Listen(IPAddress.Any, lanCfg.Port, l => l.UseHttps(lanCert));
 });
@@ -51,6 +56,7 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamin
 
 builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(endpoint);
+builder.Services.AddSingleton(security);
 builder.Services.AddSingleton<AudioControl>();
 builder.Services.AddSingleton<AppCatalog>();
 builder.Services.AddSingleton<PairingCodes>();
@@ -149,7 +155,7 @@ app.MapPost("/api/controls/radio-directory/check", async (HttpRequest req, Cance
 // path the phone uses; on the local port that is simply /api/... Routing runs after this, so it sees the new path.
 app.Use((ctx, next) =>
 {
-    if (ctx.Connection.LocalPort == Port && ctx.Request.Path.StartsWithSegments("/agent/api", out var rest))
+    if (IsLocalPort(ctx.Connection.LocalPort) && ctx.Request.Path.StartsWithSegments("/agent/api", out var rest))
         ctx.Request.Path = "/api" + rest;
     return next(ctx);
 });
@@ -163,6 +169,16 @@ app.Use(async (ctx, next) =>
 {
     var origin = ctx.Request.Headers.Origin.ToString();
     var keyless = false; // a Wi-Fi request let in without a key (pairing claim): it must not touch any phone state
+    if (usbPort != Port && ctx.Connection.LocalPort == usbPort)
+    {
+        var target = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpRequestFeature>()!.RawTarget;
+        if (!UsbSignature.IsValid(security.UsbKey!, ctx.Request.Method, target, ctx.Request.Headers[UsbSignature.TimeHeader],
+                ctx.Request.Headers[UsbSignature.SignatureHeader], DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+    }
     if (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port)
     {
         // The phone's key opens the panel API; the separate webhook key opens only the webhook endpoints, in a header
@@ -204,7 +220,7 @@ app.Use(async (ctx, next) =>
     if (ctx.Request.Headers.TryGetValue("X-PhoneBox-Device", out var device))
     {
         var problem = PhoneRegistry.Touch(device.ToString(), ctx.Request.Headers["X-PhoneBox-Model"].ToString(),
-            ctx.Connection.LocalPort == Port ? "USB" : "Wi-Fi", ctx.Request.Headers["X-PhoneBox-WebView"].ToString());
+            IsLocalPort(ctx.Connection.LocalPort) ? "USB" : "Wi-Fi", ctx.Request.Headers["X-PhoneBox-WebView"].ToString());
         if (problem is not null) app.Logger.LogWarning("WebView: {Problem}", problem);
     }
     if (ctx.Request.Headers.TryGetValue("X-PhoneBox-App", out var appVersion) && appVersion.ToString().Length is > 0 and < 32)
@@ -289,7 +305,7 @@ app.MapGet("/api/lan", (ConfigStore cfg) => Results.Json(new
     fingerprint = lanCert is null ? null : Lan.Fingerprint(lanCert),
 }));
 
-app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto, installed = UpdateService.RunningInstalled }));
+app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto && security.AutoUpdate, installed = UpdateService.RunningInstalled }));
 // Settings › General: install the phone app on a phone that does not have it yet (local only).
 app.MapPost("/api/phone/install", async (UpdateService upd) =>
     await upd.InstallAppAsync() is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
@@ -531,7 +547,7 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
 {
     var ct = ctx.RequestAborted;
     var isPhone = ctx.Request.Headers.ContainsKey("X-PhoneBox-App");
-    var via = ctx.Connection.LocalPort == Port ? "USB/local" : "Wi-Fi";
+    var via = IsLocalPort(ctx.Connection.LocalPort) ? "USB/local" : "Wi-Fi";
     log.LogInformation("live stream opened ({Who}, {Via})", isPhone ? "phone" : "other client", via);
     ctx.Response.ContentType = "text/event-stream";
     ctx.Response.Headers["X-Accel-Buffering"] = "no";
@@ -588,7 +604,9 @@ app.MapPost(ClaudeHook.Endpoint, async (HttpRequest req, ConfigStore cfg, Approv
     return output is null ? Results.Text("") : Results.Json(output);
 });
 app.MapGet("/api/claude/hook", () => Results.Json(new { installed = ClaudeHook.Installed(), path = ClaudeHook.SettingsPath }));
-app.MapPost("/api/claude/hook", (ConfigStore cfg) => ClaudeHook.Configure(true, Port, cfg.Get().Claude.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
+app.MapPost("/api/claude/hook", (ConfigStore cfg) => !security.ClaudeAccess
+    ? Results.BadRequest(new { error = "Claude access is off in security.json" })
+    : ClaudeHook.Configure(true, Port, cfg.Get().Claude.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 app.MapDelete("/api/claude/hook", (ConfigStore cfg) => ClaudeHook.Configure(false, Port, cfg.Get().Claude.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 
 // Permission prompts waiting for the phone (posted by the Claude Code hook, see ClaudeHook.cs).

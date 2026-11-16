@@ -115,6 +115,7 @@ class MainActivity : Activity(), SensorEventListener {
         // Lets you debug the panel from the computer via chrome://inspect.
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
+        takeUsbKey(intent)
         web.loadUrl("https://$ASSET_HOST/assets/www/index.html")
         hideSystemUi()
         handlePairingLink(intent)
@@ -123,7 +124,14 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        takeUsbKey(intent)
         handlePairingLink(intent)
+    }
+
+    /** The agent starts the panel with its USB key (security.json); keep it, and keep it out of the saved intent. */
+    private fun takeUsbKey(intent: Intent?) {
+        link.setUsbKey(intent?.getStringExtra(AgentLink.USB_KEY_EXTRA))
+        intent?.removeExtra(AgentLink.USB_KEY_EXTRA)
     }
 
     /** A pairing link from the computer's QR code (Settings › Wi-Fi › Pair a phone over Wi-Fi): ask, then pair. */

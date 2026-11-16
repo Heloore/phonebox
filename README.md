@@ -37,6 +37,28 @@ Windows, Linux and macOS. No root, PhoneBox account or cloud service required.</
 <p align="center"><img src="docs/hero-0.6.png" width="900" alt="PhoneBox on three phones showing automation, home and planner pages"><br>
 <sub>Example layouts with demo data.</sub></p>
 
+## This fork: security.json
+
+The agent reads `security.json` next to `config.json` (`%APPDATA%\PhoneBox\security.json` on Windows) at start and
+creates it with these safe defaults when it is missing. Restart the agent after editing it.
+
+```json
+{
+  "autoUpdate": false,
+  "claudeAccess": false,
+  "usbRequiresKey": true,
+  "usbKey": "<generated>"
+}
+```
+
+| Switch | `false` / `true` |
+|---|---|
+| `autoUpdate` | `false`: no background update checks or installs. **Settings › Updates** can still check by hand (from this fork's releases). |
+| `claudeAccess` | `false`: never reads `~/.claude/.credentials.json` (Claude quota), `~/.claude/sessions` (Claude sessions) and refuses to install the Claude Code permission hook. |
+| `usbRequiresKey` | `true`: the USB tunnel ends on its own port (agent port + 2, `127.0.0.1:8767`) where every request must carry an HMAC signature made with `usbKey`. The agent hands the key to the PhoneBox app over adb when it opens the panel, so other apps on the phone can no longer reach the agent. Needs the phone app built from this fork. |
+
+Delete `usbKey` to generate a new one; the phone gets it on the next plug-in.
+
 PhoneBox pairs a full-screen **Android app** with a small **desktop agent**. Build your panel in a browser-based
 visual editor: **118 widgets**, **30 templates**, multiple pages and a live preview. Connect several phones with
 their own layouts, or switch one phone between paired computers.

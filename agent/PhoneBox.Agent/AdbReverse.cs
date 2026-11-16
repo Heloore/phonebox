@@ -6,7 +6,7 @@ namespace PhoneBox.Agent;
 /// While a phone is connected over USB, keeps an "adb reverse tcp:8765 tcp:8765" rule in place so that
 /// 127.0.0.1:8765 on the phone reaches this agent. When a phone is newly plugged in, wakes it and opens the panel.
 /// </summary>
-public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log, AgentEndpoint? endpoint = null) : BackgroundService
+public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log, AgentEndpoint? endpoint = null, SecurityConfig? security = null) : BackgroundService
 {
     public const string PanelActivity = "net.oxog.phonebox.deskpanel/.MainActivity";
     private const string HomeAlias = "net.oxog.phonebox.deskpanel/.HomeAlias";
@@ -17,7 +17,10 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log, AgentEn
     /// <summary>Connected phones that do not have the PhoneBox app yet (installed from Settings, e.g. after winget / Scoop).</summary>
     public string[] MissingApp => _missingApp;
     private const string Rule = "tcp:8765";
-    private string TargetRule => $"tcp:{endpoint?.Port ?? 8765}";
+    private string TargetRule => $"tcp:{security?.UsbTargetPort(endpoint?.Port ?? 8765) ?? endpoint?.Port ?? 8765}";
+    /// <summary>The panel's start command; hands the phone its USB key when security.json requires one.</summary>
+    private string StartPanel => security is { UsbRequiresKey: true } ? $"am start -n {PanelActivity} --es {UsbKeyExtra} {security.UsbKey}" : $"am start -n {PanelActivity}";
+    public const string UsbKeyExtra = "net.oxog.phonebox.usbKey";
 
     private string _lastState = "";
     private volatile string[] _devices = [];
@@ -50,7 +53,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log, AgentEn
         foreach (var d in _devices)
         {
             await Adb(adb, $"-s {d} shell input keyevent KEYCODE_WAKEUP", CancellationToken.None);
-            await Adb(adb, $"-s {d} shell am start -n {PanelActivity}", CancellationToken.None);
+            await Adb(adb, $"-s {d} shell {StartPanel}", CancellationToken.None);
         }
     }
 
@@ -71,7 +74,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log, AgentEn
             await Adb(adb, $"-s {device} shell input keyevent KEYCODE_WAKEUP", ct);
             // A secure PIN/password keyguard still needs the user's unlock.
             await Adb(adb, $"-s {device} shell wm dismiss-keyguard", ct);
-            await Adb(adb, $"-s {device} shell am start -n {PanelActivity}", ct);
+            await Adb(adb, $"-s {device} shell {StartPanel}", ct);
         }
         log.LogInformation("{Device}: phone screen {State}", device, locked ? "asleep" : "awake");
     }
@@ -127,7 +130,7 @@ public sealed class AdbReverse(ConfigStore cfg, ILogger<AdbReverse> log, AgentEn
             else
             {
                 await Adb(adb, $"-s {d} shell input keyevent KEYCODE_WAKEUP", ct);
-                await Adb(adb, $"-s {d} shell am start -n {PanelActivity}", ct);
+                await Adb(adb, $"-s {d} shell {StartPanel}", ct);
                 log.LogInformation("{Device}: adb reverse set up, panel opened", d);
             }
         }
