@@ -64,16 +64,12 @@ class AgentLink(context: Context) {
         prefs.edit().putString(USB_KEY, key).apply()
     }
 
-    /** HMAC-SHA256 of "METHOD
-path
-time" (see Security.cs on the agent): the key itself never leaves the phone. */
+    /** HMAC-SHA256 of "METHOD\npath\ntime" (see Security.cs on the agent): the key itself never leaves the phone. */
     private fun signUsb(c: HttpURLConnection, method: String, pathAndQuery: String) {
         val key = usbKey ?: return
         val time = System.currentTimeMillis().toString()
         val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(hexToBytes(key), "HmacSHA256")) }
-        val signature = mac.doFinal("$method
-$pathAndQuery
-$time".toByteArray()).joinToString("") { "%02x".format(it) }
+        val signature = mac.doFinal("$method\n$pathAndQuery\n$time".toByteArray()).joinToString("") { "%02x".format(it) }
         c.setRequestProperty("X-PhoneBox-Time", time)
         c.setRequestProperty("X-PhoneBox-Signature", signature)
     }
