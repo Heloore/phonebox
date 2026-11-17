@@ -87,9 +87,14 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log) : Backgrou
 
     private Task GpuLoop(CancellationToken ct)
     {
+#if WINDOWS
+        return Task.CompletedTask; // this fork: Windows GPU data comes from LibreHardwareMonitor only (CpuTempLoop)
+#endif
+#pragma warning disable CS0162
         if (OperatingSystem.IsMacOS()) return AppleGpuLoop(ct);
         _ = Task.Run(() => OsGpuLoop(ct), ct);
         return NvidiaLoop(ct);
+#pragma warning restore CS0162
     }
 
     // Keeps nvidia-smi running and reads one line per GPU per second.
@@ -122,22 +127,15 @@ public sealed partial class SystemMonitor(ILogger<SystemMonitor> log) : Backgrou
         }
     }
 
-    // Every vendor's GPU through the OS: Windows' graphics kernel and GPU counters, Linux sysfs (amdgpu, i915/xe).
+    // Every vendor's GPU through Linux sysfs (amdgpu, i915/xe).
     private async Task OsGpuLoop(CancellationToken ct)
     {
-#if WINDOWS
-        using var win = new WindowsGpu();
-#endif
         var failures = 0;
         while (!ct.IsCancellationRequested)
         {
             try
             {
-#if WINDOWS
-                _osGpus = win.Sample();
-#else
                 _osGpus = Gpus.ReadSysfs();
-#endif
                 failures = 0;
             }
             catch (Exception ex)

@@ -59,6 +59,8 @@ creates it with these safe defaults when it is missing. Restart the agent after 
 
 Delete `usbKey` to generate a new one; the phone gets it on the next plug-in.
 
+On Windows this fork reads GPU data only from [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)'s web server (`127.0.0.1:8085`, Options › Remote Web Server), like the CPU temperature. It does not start `nvidia-smi` or sample the Windows GPU counters. Without LibreHardwareMonitor the panel shows no GPU or CPU temperature; CPU load, RAM, disks and network still come from Windows.
+
 PhoneBox pairs a full-screen **Android app** with a small **desktop agent**. Build your panel in a browser-based
 visual editor: **118 widgets**, **30 templates**, multiple pages and a live preview. Connect several phones with
 their own layouts, or switch one phone between paired computers.

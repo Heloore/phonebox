@@ -6,7 +6,7 @@ namespace PhoneBox.Agent;
 
 /// <summary>
 /// The GPU list from several sources: nvidia-smi, LibreHardwareMonitor's web server, the Windows graphics kernel
-/// (D3DKMT and the GPU performance counters, the same data Task Manager shows), Linux sysfs and macOS ioreg.
+/// (removed in this fork; Windows uses LibreHardwareMonitor only), Linux sysfs and macOS ioreg.
 /// The same card can come from more than one source; the entries are matched by name and the earlier source wins,
 /// a later one only fills what the earlier one left empty.
 /// </summary>
